@@ -1,1 +1,1 @@
-# first-meeting
+# Intro to R and Bioinformatics
