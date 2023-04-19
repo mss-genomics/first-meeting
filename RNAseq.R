@@ -12,7 +12,7 @@ library(tidyverse)
 library(gplots)
 
 ### Import data
-countData = read.csv('C:/Users/Richie Jeremian/Desktop/MBIGG/Session1/GSE224783_readcount_trimmed.csv', header=1)
+countData = read.csv('https://raw.githubusercontent.com/mss-genomics/first-meeting/ce48486c5e0122edfba55220a477b80c48cbd397/GSE224783_readcount_trimmed.csv', header=1)
 
 ### Transform first column
 rownames(countData) = countData$GeneID
