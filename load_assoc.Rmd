@@ -7,7 +7,6 @@ output: html_document
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
-setwd("~/Desktop/mss-genomics")
 ```
 
 ## Dataset
@@ -153,5 +152,3 @@ zoom
 ```
 
 By uploading the table to [LocusZoom](http://locuszoom.org/), create a regional Manhattan plot. Note that the statistically significant associations around the E4 allele fall between two recombination hotspots.
-
-![](locuszoom.png)
