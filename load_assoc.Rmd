@@ -1,0 +1,157 @@
+---
+title: "Genetic Association Study for Late-Onset Alzheimer Disease"
+author: "MSS Genomics Group"
+date: "2023/04/20"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+setwd("~/Desktop/mss-genomics")
+```
+
+## Dataset
+
+The dataset comes from an association study around the APOE locus by the Japanese Genetic Study Consortium for Alzheimer Disease (PMID: [19442637](https://pubmed.ncbi.nlm.nih.gov/19442637/)). We simulated the data at neutral sites that were omitted from the publication. 547 patients with LOAD and 715 controls were genotyped at SNPs in a 200 kb region including the APOE locus. 171 SNPs passed quality control.
+
+The study was conducted in a homogeneous Japanese population. This avoids spurious associations due to population stratification, i.e., mixing populations that are heterogeneous with respect to allele frequencies and disease prevalence.
+
+Each SNP site has 2 alleles in the sample gene pool. The allele in lowercase is the minor allele, i.e., the allele that is less frequent in the population.
+
+```{r message=FALSE, warning=FALSE}
+library(tidyverse)
+geno <- read_csv("https://raw.githubusercontent.com/mss-genomics/first-meeting/main/APOE_LOAD.csv")
+geno
+```
+
+## Statistics
+
+First, calculate the allele counts from the genotype counts.
+
+```{r}
+geno1 <- geno %>% rowwise() %>%
+  mutate(LOAD_M=2*LOAD_MM+LOAD_Mm) %>% 
+  mutate(LOAD_m=2*LOAD_mm+LOAD_Mm) %>% 
+  mutate(Control_M=2*Control_MM+Control_Mm) %>%
+  mutate(Control_m=2*Control_mm+Control_Mm)
+geno1[,c(1:3,10:13)]
+```
+
+Association (i.e. lack of independence) between the genotypes at a site and the disease can be tested by a chi-square test with 2 d.f. for the 3x2 contingency table of genotype counts.
+
+Here is an example for the E4 allele of APOE:
+
+```{r}
+E4 <- "rs429358"
+E4_genotype_table <- rbind(c(geno1[geno1$SNP_ID==E4,]$Control_MM, geno1[geno1$SNP_ID==E4,]$LOAD_MM), c(geno1[geno1$SNP_ID==E4,]$Control_Mm,geno1[geno1$SNP_ID==E4,]$LOAD_Mm), c(geno1[geno1$SNP_ID==E4,]$Control_mm,geno1[geno1$SNP_ID==E4,]$LOAD_mm))
+chisq.test(E4_genotype_table)$p.value
+```
+
+Calculate the odds ratios and their 95% confidence interval for the E4/E4 and E3/E4 genotypes compared to the E3/E3 genotype.
+
+```{r}
+library(epitools)
+oddsratio(E4_genotype_table)$measure
+```
+
+The Cochran-Armitage trend test requires a specific genetic model. For example, test whether the disease risk increases linearly with the number of risk alleles, i.e., the additive model. Also test for a recessive model or a dominant model. 
+
+```{r}
+trend_add <- prop.trend.test(E4_genotype_table[,1], E4_genotype_table[,1]+E4_genotype_table[,2], c(0,0.5,1))
+trend_dom <- prop.trend.test(E4_genotype_table[,1], E4_genotype_table[,1]+E4_genotype_table[,2], c(0,1,1))
+trend_rec <- prop.trend.test(E4_genotype_table[,1], E4_genotype_table[,1]+E4_genotype_table[,2], c(0,0,1))
+c(trend_add$p.value, trend_dom$p.value, trend_rec$p.value)
+```
+
+A commonly used significance test compares the allele frequencies between cases and controls using a chi-square test with 1 d.f. for the 2x2 contingency table of allele counts.
+
+```{r}
+E4_allele_table <- rbind(c(geno1[geno1$SNP_ID==E4,]$Control_M, geno1[geno1$SNP_ID==E4,]$LOAD_M),c(geno1[geno1$SNP_ID==E4,]$Control_m,geno1[geno1$SNP_ID==E4,]$LOAD_m))
+oddsratio(E4_allele_table)
+```
+
+In what follows, calculate the allele-based chi-square test and odds ratio with 95% confidence intervals for each SNP.
+
+```{r}
+geno1 <- geno1 %>% rowwise() %>%
+  mutate(stats = paste(unlist(oddsratio(rbind(c(Control_M,LOAD_M),c(Control_m,LOAD_m))))[c("p.value6","measure2","measure4","measure6")], collapse=" ")) %>%
+  separate(stats, c("p_value", "OR", "95_CI_inf", "95_CI_sup"), sep = " ", convert=TRUE)
+geno1[,c(1:2,10:17)]
+```
+
+In order to adjust for multiple testing, apply the Bonferonni correction. Divide the desired genome-wide significance level by the number of tests performed: 0.05/171=0.0003. Consider an SNP to be statistically significant if its p-value<0.0003. In a GWAS involving 100K to 1M SNPs, the significance level is typically set to 5x10^-8. 
+
+## Ensembl
+
+Each rsID denotes a unique SNP site. Query the Ensembl database to obtain more information about an SNP site, such as its position on the chromosome and its genetic context.
+
+```{r message=FALSE, warning=FALSE}
+library(biomaRt)
+marts <- listEnsembl()
+ensembl <- useEnsembl(biomart = "snps")
+datasets <- searchDatasets(mart = ensembl, pattern = "Human")
+ensembl <- useDataset(dataset = "hsapiens_snp", mart = ensembl)
+filters <- listFilters(ensembl)
+attributes <- listAttributes(ensembl)
+rsid <- getBM(attributes = c('refsnp_id', 'chr_name', 'chrom_start', 'ensembl_gene_name', "cds_start"),
+  filters = 'snp_filter',
+  values = geno1$SNP_ID, 
+  mart = ensembl
+)
+ensembl2 <- useEnsembl(biomart = "genes", dataset = "hsapiens_gene_ensembl")
+symbols <- getBM(attributes = c('ensembl_gene_id', 'external_gene_name'),
+  filters = 'ensembl_gene_id',
+  values = unique(rsid$ensembl_gene_name),
+  mart = ensembl2
+)
+geno2 <- rsid %>% as_tibble() %>%
+  left_join(symbols, by = join_by(ensembl_gene_name == ensembl_gene_id)) %>%
+  left_join(geno1, by = join_by(refsnp_id == SNP_ID))
+geno2[,1:8]
+```
+
+## Plot
+
+Plot the Q-Q plot, which compares the theoretical distribution of p-values under the null hypothesis to the observed p-values from the sample.
+
+```{r}
+expected <- c(1:nrow(geno1))/(nrow(geno1)+1)
+lexp <- -log10(expected)
+qq <- geno1 %>% dplyr::select(p_value, MAF) %>% 
+  dplyr::arrange(p_value) %>% 
+  mutate(p_value=-log10(p_value)) %>%
+  add_column(lexp)
+ggplot(qq, aes(x=lexp, y=p_value, colour=MAF)) + 
+  geom_point(alpha=0.4, size=3.5) +
+  scale_colour_gradient(low = "red", high = "yellow") +
+  scale_x_continuous(limits=c(0,5), expand = c(0, 0)) +
+  scale_y_continuous(limits=c(0, 35), expand = c(0, 0)) +
+  geom_abline(intercept=0, slope=1, color="red") +
+  xlab("-log10(expected p-value)") + 
+  ylab("-log10(observed p-value)") +
+  theme_bw()
+```
+
+Plot the odds ratios and p-values in a volcano plot. Notice that common alleles cluster towards the pit: common polymorphisms tend to be neutral. Notice that rare alleles barely reach statistical significance. GWAS of unrelated individuals do not have the power to detect very rare risk alleles. However, very rare alleles with large effect may collectively explain an important part of the Alzheimer 'missing heritability'.
+
+```{r}
+ggplot(geno1, aes(x=log2(OR), y=-log10(p_value), colour=MAF)) + 
+  geom_point(alpha=0.4, size=3.5) +
+  scale_colour_gradient(low = "red", high = "yellow") +
+  scale_x_continuous(limits=c(-2,2)) +
+  scale_y_continuous(limits=c(0, 40), expand = c(0, 0)) +
+  geom_hline(yintercept=-log10(0.0003), linetype="dashed") +
+  theme_bw()
+```
+
+Export a table of p-values ordered by chromosomal position.
+
+```{r}
+zoom <- geno2 %>% dplyr::select(chr_name,chrom_start,p_value) %>% dplyr::arrange(chrom_start)
+write_tsv(zoom, "zoom.txt")
+zoom
+```
+
+By uploading the table to [LocusZoom](http://locuszoom.org/), create a regional Manhattan plot. Note that the statistically significant associations around the E4 allele fall between two recombination hotspots.
+
+![](locuszoom.png)
